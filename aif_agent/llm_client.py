@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import logging
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
 import os
 
 from groq import Groq
+
+from .guardrails import GuardrailReport, QuestionGuardrails
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -39,17 +45,30 @@ class AifLlmClient:
         self._client = Groq(api_key=api_key)
         self._model = model
 
-    def generate_questions(
+    def _parse_generated_questions(self, content: str) -> List[Dict[str, Any]]:
+        data = json.loads(content)
+        questions_raw = data.get("questions", [])
+        return questions_raw if isinstance(questions_raw, list) else []
+
+    def _generate_once(
         self,
         days_until_exam: int,
         num_questions: int,
         weak_topics: List[str],
         domains_weighting: Dict[str, float],
-    ) -> List[GeneratedQuestion]:
+        extra_feedback: str | None = None,
+    ) -> GuardrailReport:
         system_prompt = (
             "You are an expert AWS instructor preparing a user for the AWS "
             "Artificial Intelligence Foundations (AIF) exam. Generate high-quality practice "
-            "questions that match the official blueprint and domain weightings."
+            "questions that match the official blueprint and domain weightings.\n\n"
+            "CRITICAL: For each question you generate:\n"
+            "1. The correct_option MUST be a letter A-D that corresponds to the correct answer in the options list.\n"
+            "2. The correct answer MUST exist in the options array.\n"
+            "3. Verify that your chosen correct_option actually matches one of the 4 options.\n"
+            "4. Never generate a question where the correct answer is not in the options.\n"
+            "5. Stick to factual AWS service capabilities. Do not mix incompatible services.\n"
+            "6. Avoid questions that use unsupported services or that omit the correct answer from the options."
         )
 
         user_prompt = f"""
@@ -72,12 +91,26 @@ Each item must be an object with keys:
 - question_id: stable id, string
 - label: like "Q1", "Q2", ...
 - text: full question text
-- options: array of 4 options (A-D). **Do NOT prefix options with letters**;
+- options: array of exactly 4 options (A-D). **Do NOT prefix options with letters**;
     return only the raw option text. The email formatter will add "A.", "B.", etc.
-- correct_option: a single letter A-D
-- explanation: short explanation of correct answer
+- correct_option: a single letter A-D that MUST correspond to the correct answer in the options array
+- explanation: short explanation of correct answer, verifying it's actually correct
 - topic_id: a string mapping to domain/task (e.g. "D2.T2.1") or key AWS service name
 - question_type: one of ["mcq", "scenario_mcq", "practical_mcq"]
+
+IMPORTANT: Before finalizing each question, verify:
+- correct_option is valid (A, B, C, or D)
+- correct_option index points to the correct answer in the options list
+- The explanation confirms why that option is correct
+"""
+
+        if extra_feedback:
+            user_prompt += f"""
+
+Rejected question feedback from previous attempt:
+{extra_feedback}
+
+Fix the issues above and regenerate only valid questions.
 """
 
         completion = self._client.chat.completions.create(
@@ -87,14 +120,64 @@ Each item must be an object with keys:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.4,
+            temperature=0.3,
         )
 
-        content = completion.choices[0].message.content
-        import json
+        questions_raw = self._parse_generated_questions(completion.choices[0].message.content)
+        return QuestionGuardrails().validate_questions(questions_raw)
 
-        data = json.loads(content)
-        questions_raw = data.get("questions", [])
+    def generate_questions(
+        self,
+        days_until_exam: int,
+        num_questions: int,
+        weak_topics: List[str],
+        domains_weighting: Dict[str, float],
+    ) -> List[GeneratedQuestion]:
+        max_attempts = 3
+        report = GuardrailReport()
+        questions_raw: List[Dict[str, Any]] = []
+
+        for attempt in range(1, max_attempts + 1):
+            extra_feedback = None
+            if report.rejected_questions:
+                extra_feedback = "\n".join(
+                    f"- {issue.label} ({issue.question_id}): {issue.reason}"
+                    for issue in report.rejected_questions
+                )
+
+            report = self._generate_once(
+                days_until_exam=days_until_exam,
+                num_questions=num_questions,
+                weak_topics=weak_topics,
+                domains_weighting=domains_weighting,
+                extra_feedback=extra_feedback,
+            )
+            questions_raw = report.valid_questions
+
+            if len(questions_raw) >= num_questions:
+                if report.rejected_count:
+                    logger.warning(
+                        "Guardrails filtered out %s invalid questions on attempt %s",
+                        report.rejected_count,
+                        attempt,
+                    )
+                break
+
+            logger.warning(
+                "Guardrails returned %s/%s valid questions on attempt %s",
+                report.valid_count,
+                num_questions,
+                attempt,
+            )
+
+        if len(questions_raw) < num_questions:
+            logger.warning(
+                "Returning %s valid questions after %s attempts; requested %s",
+                len(questions_raw),
+                max_attempts,
+                num_questions,
+            )
+
         questions: List[GeneratedQuestion] = []
         for q in questions_raw:
             questions.append(

@@ -1,3 +1,4 @@
 boto3
 groq
 python-dotenv
+streamlit

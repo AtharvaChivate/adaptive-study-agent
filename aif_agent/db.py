@@ -17,6 +17,15 @@ class TopicMastery:
     last_updated: str
 
 
+@dataclass
+class QuestionFeedback:
+    question_id: str
+    feedback_type: str  # "incorrect_answer", "unclear", "factually_wrong", "ambiguous"
+    comment: str
+    submitted_at: str
+    batch_id: str | None = None
+
+
 class AifDynamoDb:
     def __init__(
         self,
@@ -119,3 +128,47 @@ class AifDynamoDb:
             FilterExpression=Attr("batch_id").eq(batch_id),
         )
         return resp.get("Items", [])
+
+    # --- Question feedback ---
+
+    def submit_question_feedback(
+        self,
+        exam_name: str,
+        question_id: str,
+        feedback_type: str,
+        comment: str,
+        batch_id: str | None = None,
+    ) -> None:
+        """Store feedback on a question (incorrect answer, unclear, factually wrong, etc.)."""
+        # Store as a separate record with feedback_type as sort key indicator
+        self._question_history_tbl.put_item(
+            Item={
+                "exam_name": exam_name,
+                "question_id": f"feedback#{question_id}#{datetime.utcnow().isoformat()}",
+                "batch_id": batch_id or "general",
+                "feedback_type": feedback_type,
+                "comment": comment,
+                "submitted_at": datetime.utcnow().isoformat(),
+                "original_question_id": question_id,
+            }
+        )
+
+    def list_question_feedback(self, exam_name: str) -> List[QuestionFeedback]:
+        """List all feedback submitted for questions in this exam."""
+        resp = self._question_history_tbl.query(
+            KeyConditionExpression=Key("exam_name").eq(exam_name)
+        )
+        items = resp.get("Items", [])
+        feedback_list: List[QuestionFeedback] = []
+        for item in items:
+            if "feedback#" in str(item.get("question_id", "")):
+                feedback_list.append(
+                    QuestionFeedback(
+                        question_id=item.get("original_question_id", ""),
+                        feedback_type=item.get("feedback_type", ""),
+                        comment=item.get("comment", ""),
+                        submitted_at=item.get("submitted_at", ""),
+                        batch_id=item.get("batch_id"),
+                    )
+                )
+        return feedback_list
