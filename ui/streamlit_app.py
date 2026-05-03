@@ -8,6 +8,10 @@ import logging
 from typing import List, Dict
 from pathlib import Path
 
+# Load environment variables from .env
+from dotenv import load_dotenv
+load_dotenv()
+
 # Setup debug logging
 log_file = Path(__file__).parent / "debug.log"
 logging.basicConfig(
@@ -100,18 +104,35 @@ def try_build_llm_and_generate(num_questions: int) -> List[GeneratedQuestion]:
         return mock_generate_questions(num_questions)
 
 
+def _load_dynamodb_settings() -> dict[str, str]:
+    """Load only the settings needed to write to DynamoDB.
+
+    This intentionally does not require exam-date configuration, so local UI
+    persistence can work independently from question-generation timing.
+    """
+    return {
+        "exam_name": os.getenv("AIF_EXAM_NAME", "AWS AIF"),
+        "aws_region": os.getenv("AWS_REGION", "us-east-1"),
+        "topic_mastery_table": os.getenv("AIF_TOPIC_MASTERY_TABLE", "aif_topic_mastery"),
+        "question_history_table": os.getenv("AIF_QUESTION_HISTORY_TABLE", "aif_question_history"),
+        "exam_meta_table": os.getenv("AIF_EXAM_META_TABLE", "aif_exam_meta"),
+        "daily_question_map_table": os.getenv("AIF_DAILY_QUESTION_MAP_TABLE", "aif_daily_question_map"),
+    }
+
+
 def persist_batch_if_possible(questions: List[GeneratedQuestion], batch_id: str) -> bool:
-    try:
-        cfg = load_config()
-        logger.info(f"Config loaded for persistence. Exam: {cfg.exam_name}")
-    except Exception as e:
-        logger.warning(f"No config found; skipping persistence to DynamoDB: {e}")
-        st.info("No config found; skipping persistence to DynamoDB.")
-        return False
+    cfg = _load_dynamodb_settings()
+    logger.info(f"Loaded DynamoDB settings for exam: {cfg['exam_name']}")
 
     try:
         logger.info("Building DynamoDB client...")
-        db = AifDynamoDb(region=cfg.aws_region, topic_mastery_table=cfg.dynamodb_topic_mastery_table, question_history_table=cfg.dynamodb_question_history_table, exam_meta_table=cfg.dynamodb_exam_meta_table, daily_question_map_table=cfg.dynamodb_daily_question_map_table)
+        db = AifDynamoDb(
+            region=cfg["aws_region"],
+            topic_mastery_table=cfg["topic_mastery_table"],
+            question_history_table=cfg["question_history_table"],
+            exam_meta_table=cfg["exam_meta_table"],
+            daily_question_map_table=cfg["daily_question_map_table"],
+        )
     except Exception as e:
         logger.error(f"Failed to build DynamoDB client: {e}", exc_info=True)
         st.warning(f"Failed to build DynamoDB client: {e}")
@@ -121,7 +142,7 @@ def persist_batch_if_possible(questions: List[GeneratedQuestion], batch_id: str)
     mappings = {q.label: q.question_id for q in questions}
     try:
         logger.info(f"Writing daily question map for batch {batch_id}...")
-        db.put_daily_question_map(cfg.exam_name, batch_id, mappings)
+        db.put_daily_question_map(cfg["exam_name"], batch_id, mappings)
     except Exception as e:
         logger.warning(f"Failed to write daily question map: {e}", exc_info=True)
         st.warning(f"Failed to write daily question map: {e}")
@@ -130,7 +151,7 @@ def persist_batch_if_possible(questions: List[GeneratedQuestion], batch_id: str)
     for q in questions:
         records.append(
             {
-                "exam_name": cfg.exam_name,
+                "exam_name": cfg["exam_name"],
                 "question_id": q.question_id,
                 "batch_id": batch_id,
                 "label": q.label,
@@ -370,6 +391,68 @@ def main() -> None:
                 graded = llm.grade_answers(questions, answers)
         except Exception:
             graded = grade_locally(questions, answers)
+        
+        # ===== PERSIST ANSWERS AND MASTERY TO DYNAMODB =====
+        try:
+            cfg = load_config()
+            db = AifDynamoDb(
+                region=cfg.aws_region,
+                topic_mastery_table=cfg.dynamodb_topic_mastery_table,
+                question_history_table=cfg.dynamodb_question_history_table,
+                exam_meta_table=cfg.dynamodb_exam_meta_table,
+                daily_question_map_table=cfg.dynamodb_daily_question_map_table,
+            )
+            
+            # Build updates for question_history
+            updates = []
+            mastery_deltas = {}  # topic_id -> list of deltas
+            
+            for g in graded:
+                updates.append({
+                    "question_id": g.question_id,
+                    "user_answer": g.user_answer,
+                    "is_correct": g.is_correct,
+                    "short_feedback": g.short_feedback,
+                    "detailed_explanation": g.detailed_explanation,
+                })
+                
+                # Accumulate mastery deltas by topic
+                if g.topic_id not in mastery_deltas:
+                    mastery_deltas[g.topic_id] = []
+                mastery_deltas[g.topic_id].append(g.mastery_delta)
+            
+            # Batch update question records
+            if updates:
+                logger.info(f"Persisting {len(updates)} answered questions to DynamoDB...")
+                db.batch_update_question_answers(cfg.exam_name, updates)
+                logger.info(f"Successfully persisted answers for {len(updates)} questions")
+            
+            # Update topic mastery scores
+            for topic_id, deltas in mastery_deltas.items():
+                try:
+                    # Get current mastery for this topic
+                    current_masteries = db.list_topic_mastery(cfg.exam_name)
+                    current_score = next(
+                        (m.score for m in current_masteries if m.topic_id == topic_id),
+                        0.5  # Default to 0.5 (neutral) if not found
+                    )
+                    
+                    # Calculate new score: clamp between 0.0 and 1.0
+                    avg_delta = sum(deltas) / len(deltas) if deltas else 0.0
+                    new_score = max(0.0, min(1.0, current_score + avg_delta))
+                    
+                    logger.info(f"Updating mastery for {topic_id}: {current_score:.2f} -> {new_score:.2f} (delta: {avg_delta:.2f})")
+                    db.update_topic_mastery(cfg.exam_name, topic_id, new_score)
+                except Exception as e:
+                    logger.warning(f"Failed to update mastery for {topic_id}: {e}")
+            
+            if mastery_deltas:
+                logger.info(f"Updated mastery for {len(mastery_deltas)} topics")
+                st.success(f"✅ Answers and mastery scores persisted to DynamoDB ({len(updates)} answers, {len(mastery_deltas)} topics)")
+        except Exception as e:
+            logger.error(f"Failed to persist answers to DynamoDB: {e}", exc_info=True)
+            st.warning(f"⚠️ Could not persist answers to database: {e}")
+        # ===== END DYNAMODB PERSISTENCE =====
         
         # Separate results
         correct_list = [g for g in graded if g.is_correct and answers.get(g.label, "").strip()]

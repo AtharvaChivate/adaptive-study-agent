@@ -172,3 +172,56 @@ class AifDynamoDb:
                     )
                 )
         return feedback_list
+
+    def update_question_answer(
+        self,
+        exam_name: str,
+        question_id: str,
+        user_answer: str,
+        is_correct: bool,
+        short_feedback: str,
+        detailed_explanation: str,
+    ) -> None:
+        """Update a question record with user's answer and grading results."""
+        self._question_history_tbl.update_item(
+            Key={"exam_name": exam_name, "question_id": question_id},
+            UpdateExpression="SET #answered = :answered, user_answer = :ua, is_correct = :ic, short_feedback = :sf, detailed_explanation = :de, answered_at = :aa",
+            ExpressionAttributeNames={"#answered": "answered"},
+            ExpressionAttributeValues={
+                ":answered": True,
+                ":ua": user_answer,
+                ":ic": is_correct,
+                ":sf": short_feedback,
+                ":de": detailed_explanation,
+                ":aa": datetime.utcnow().isoformat(),
+            },
+        )
+
+    def batch_update_question_answers(
+        self, 
+        exam_name: str, 
+        updates: List[Dict[str, Any]]
+    ) -> None:
+        """Batch update multiple question answers.
+        
+        Each item in updates dict should have:
+        - question_id
+        - user_answer
+        - is_correct
+        - short_feedback
+        - detailed_explanation
+        """
+        for update in updates:
+            self._question_history_tbl.update_item(
+                    Key={"exam_name": exam_name, "question_id": update["question_id"]},
+                    UpdateExpression="SET #answered = :answered, user_answer = :ua, is_correct = :ic, short_feedback = :sf, detailed_explanation = :de, answered_at = :aa",
+                    ExpressionAttributeNames={"#answered": "answered"},
+                    ExpressionAttributeValues={
+                        ":answered": True,
+                        ":ua": update["user_answer"],
+                        ":ic": update["is_correct"],
+                        ":sf": update["short_feedback"],
+                        ":de": update["detailed_explanation"],
+                        ":aa": datetime.utcnow().isoformat(),
+                    },
+            )
