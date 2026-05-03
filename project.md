@@ -3,7 +3,7 @@
 ## Overview
 This project is an autonomous AI study agent designed to help a user prepare for the AWS Artificial Intelligence Foundations (AIF) exam.
 
-The agent sends daily practice questions via email, evaluates user responses, tracks topic mastery over time, and adapts future questions based on performance and time remaining until the exam.
+The agent generates practice questions, collects answers through a local Streamlit UI, evaluates user responses, tracks topic mastery over time, and adapts future questions based on performance and time remaining until the exam.
 
 This is a true **stateful AI agent**, not just a scheduled script.
 
@@ -18,7 +18,7 @@ This is a true **stateful AI agent**, not just a scheduled script.
 ---
 
 ## What Makes This an Agent
-- Persistent memory (SQLite/DynamoDB)
+- Persistent memory (DynamoDB)
 - Autonomous daily execution
 - Goal-directed behavior
 - Feedback-driven adaptation
@@ -30,11 +30,12 @@ This is a true **stateful AI agent**, not just a scheduled script.
 
 ### Components
 - **Scheduler**: Triggers daily agent run
-- **SQLite Database**: Long-term memory
-- **LLM**: Generates practice questions
-- **Email System**: Outbound questions + inbound answers
+- **Streamlit UI**: Runs interactive practice sessions and captures answers
+- **DynamoDB**: Long-term memory for question history, topic mastery, exam metadata, and daily mappings
+- **LLM**: Generates practice questions and grades answers
+- **Email System**: Outbound questions + inbound answers for the broader agent workflow
 - **Policy Logic**: Controls topic selection and difficulty
-- **Feedback Loop**: Updates mastery scores
+- **Feedback Loop**: Updates question history and mastery scores
 
 ---
 
@@ -45,6 +46,12 @@ This is a true **stateful AI agent**, not just a scheduled script.
 - Question history
 - Exam date
 - Daily question mappings
+
+### Current Tables
+- `aif_topic_mastery`: Per-topic mastery scores by exam
+- `aif_question_history`: Generated questions and user answer history
+- `aif_exam_meta`: Exam-level metadata
+- `aif_daily_question_map`: Batch-to-question mapping for deterministic reply parsing
 
 ### Derived State
 - Days until exam
@@ -59,7 +66,7 @@ This is a true **stateful AI agent**, not just a scheduled script.
 Tracks estimated proficiency per exam topic.
 
 ### question_history
-Stores all answered questions and outcomes.
+Stores generated questions, user answers, grading results, and feedback.
 
 ### exam_meta
 Stores exam-level metadata (exam name, date).
@@ -71,19 +78,20 @@ Maps emailed question numbers to question IDs for reply parsing.
 
 ## Daily Agent Loop
 
-1. Load memory from database
+1. Load memory from DynamoDB
 2. Compute days remaining
 3. Identify weak topics
 4. Select topics and difficulty mix
 5. Generate questions using LLM
-6. Email questions to user
-7. Await reply
+6. Persist the batch to DynamoDB
+7. Present questions in the Streamlit UI or email them in the broader workflow
+8. Await and record the reply/answers
 
 ---
 
 ## Feedback Loop
 
-1. Receive reply email
+1. Receive reply email or UI submission
 2. Parse structured answers
 3. Store results in question history
 4. Update topic mastery scores
@@ -96,6 +104,7 @@ Maps emailed question numbers to question IDs for reply parsing.
 ### Outbound
 - Questions labeled as Q1, Q2, etc.
 - Instructions included for reply format
+- In the Streamlit UI, answers are captured directly and mapped back to the same labels
 
 ### Inbound
 - Plain-text parsing
@@ -132,4 +141,4 @@ Maps emailed question numbers to question IDs for reply parsing.
 ---
 
 ## Status
-Functional MVP agent with closed feedback loop.
+Functional MVP agent with closed feedback loop and a working Streamlit-based answer persistence path.
