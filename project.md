@@ -30,10 +30,9 @@ This is a true **stateful AI agent**, not just a scheduled script.
 
 ### Components
 - **Scheduler**: Triggers daily agent run
-- **Streamlit UI**: Runs interactive practice sessions and captures answers
-- **DynamoDB**: Long-term memory for question history, topic mastery, exam metadata, and daily mappings
+- **Streamlit UI**: Main interaction point for presenting questions, capturing answers, and providing real-time feedback
+- **DynamoDB**: Long-term memory for question history, topic mastery, exam metadata, and user progress
 - **LLM**: Generates practice questions and grades answers
-- **Email System**: Outbound questions + inbound answers for the broader agent workflow
 - **Policy Logic**: Controls topic selection and difficulty
 - **Feedback Loop**: Updates question history and mastery scores
 
@@ -72,7 +71,7 @@ Stores generated questions, user answers, grading results, and feedback.
 Stores exam-level metadata (exam name, date).
 
 ### daily_question_map
-Maps emailed question numbers to question IDs for reply parsing.
+Maps session question numbers to question IDs for tracking and result persistence.
 
 ---
 
@@ -84,32 +83,32 @@ Maps emailed question numbers to question IDs for reply parsing.
 4. Select topics and difficulty mix
 5. Generate questions using LLM
 6. Persist the batch to DynamoDB
-7. Present questions in the Streamlit UI or email them in the broader workflow
-8. Await and record the reply/answers
+7. Present questions in the Streamlit UI
+8. Await and record user answers through the UI
 
 ---
 
 ## Feedback Loop
 
-1. Receive reply email or UI submission
-2. Parse structured answers
+1. Receive user submission through the Streamlit UI
+2. Parse and validate answers
 3. Store results in question history
 4. Update topic mastery scores
 5. Persist updated state
 
 ---
 
-## Email Interaction Model
+## UI Interaction Model
 
-### Outbound
-- Questions labeled as Q1, Q2, etc.
-- Instructions included for reply format
-- In the Streamlit UI, answers are captured directly and mapped back to the same labels
+### Question Presentation
+- Questions displayed with clear labels (Q1, Q2, etc.)
+- Topics and difficulty level shown for context
+- Instructions provided within the UI
 
-### Inbound
-- Plain-text parsing
-- Ignores quoted replies and signatures
-- Deterministic mapping to questions
+### Answer Capture
+- Direct form-based input for user answers
+- Real-time validation and feedback
+- Immediate storage to DynamoDB upon submission
 
 ---
 
