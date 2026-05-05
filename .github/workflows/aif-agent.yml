@@ -1,46 +1,46 @@
-name: AWS AIF Study Agent
+# name: AWS AIF Study Agent
 
-on:
-  schedule:
-    - cron: "0 4 * * *" # 10:00 AM IST (approx) – adjust to your timezone
-  workflow_dispatch: {}
+# on:
+#   # schedule:
+#     - cron: "0 4 * * *" # 10:00 AM IST (approx) – adjust to your timezone
+#   workflow_dispatch: {}
 
-jobs:
-  run-agent:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+# jobs:
+#   run-agent:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+#       - name: Set up Python
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: "3.11"
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+#       - name: Install dependencies
+#         run: |
+#           python -m pip install --upgrade pip
+#           pip install -r requirements.txt
 
-      - name: Run daily question send
-        env:
-          AIF_EXAM_NAME: "AWS AIF"
-          AIF_EXAM_DATE: ${{ secrets.AIF_EXAM_DATE }}
-          AIF_DAYS_TO_EXAM: ${{ secrets.AIF_DAYS_TO_EXAM }}
-          AIF_MIN_QUESTIONS: "15"
-          AIF_MAX_QUESTIONS: "20"
-          AIF_USER_EMAIL: ${{ secrets.AIF_USER_EMAIL }}
-          AIF_FROM_EMAIL: ${{ secrets.AIF_FROM_EMAIL }}
-          AIF_SMTP_HOST: "smtp.gmail.com"
-          AIF_SMTP_PORT: "587"
-          AIF_SMTP_USERNAME: ${{ secrets.AIF_SMTP_USERNAME }}
-          AIF_SMTP_PASSWORD: ${{ secrets.AIF_SMTP_PASSWORD }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          AIF_TOPIC_MASTERY_TABLE: ${{ secrets.AIF_TOPIC_MASTERY_TABLE }}
-          AIF_QUESTION_HISTORY_TABLE: ${{ secrets.AIF_QUESTION_HISTORY_TABLE }}
-          AIF_EXAM_META_TABLE: ${{ secrets.AIF_EXAM_META_TABLE }}
-          AIF_DAILY_QUESTION_MAP_TABLE: ${{ secrets.AIF_DAILY_QUESTION_MAP_TABLE }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GROQ_MODEL: "llama-3.1-70b-versatile"
-        run: |
-          python -c "from aif_agent.agent import run_daily_question_send; run_daily_question_send()"
+#       - name: Run daily question send
+#         env:
+#           AIF_EXAM_NAME: "AWS AIF"
+#           AIF_EXAM_DATE: ${{ secrets.AIF_EXAM_DATE }}
+#           AIF_DAYS_TO_EXAM: ${{ secrets.AIF_DAYS_TO_EXAM }}
+#           AIF_MIN_QUESTIONS: "15"
+#           AIF_MAX_QUESTIONS: "20"
+#           AIF_USER_EMAIL: ${{ secrets.AIF_USER_EMAIL }}
+#           AIF_FROM_EMAIL: ${{ secrets.AIF_FROM_EMAIL }}
+#           AIF_SMTP_HOST: "smtp.gmail.com"
+#           AIF_SMTP_PORT: "587"
+#           AIF_SMTP_USERNAME: ${{ secrets.AIF_SMTP_USERNAME }}
+#           AIF_SMTP_PASSWORD: ${{ secrets.AIF_SMTP_PASSWORD }}
+#           AWS_REGION: ${{ secrets.AWS_REGION }}
+#           AIF_TOPIC_MASTERY_TABLE: ${{ secrets.AIF_TOPIC_MASTERY_TABLE }}
+#           AIF_QUESTION_HISTORY_TABLE: ${{ secrets.AIF_QUESTION_HISTORY_TABLE }}
+#           AIF_EXAM_META_TABLE: ${{ secrets.AIF_EXAM_META_TABLE }}
+#           AIF_DAILY_QUESTION_MAP_TABLE: ${{ secrets.AIF_DAILY_QUESTION_MAP_TABLE }}
+#           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+#           GROQ_MODEL: "llama-3.1-70b-versatile"
+#         run: |
+#           python -c "from aif_agent.agent import run_daily_question_send; run_daily_question_send()"
