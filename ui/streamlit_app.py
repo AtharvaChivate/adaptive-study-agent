@@ -117,6 +117,7 @@ def _load_dynamodb_settings() -> dict[str, str]:
         "question_history_table": os.getenv("AIF_QUESTION_HISTORY_TABLE", "aif_question_history"),
         "exam_meta_table": os.getenv("AIF_EXAM_META_TABLE", "aif_exam_meta"),
         "daily_question_map_table": os.getenv("AIF_DAILY_QUESTION_MAP_TABLE", "aif_daily_question_map"),
+        "rejected_questions_table": os.getenv("AIF_REJECTED_QUESTIONS_TABLE", "aif_rejected_questions"),
     }
 
 
@@ -132,6 +133,7 @@ def persist_batch_if_possible(questions: List[GeneratedQuestion], batch_id: str)
             question_history_table=cfg["question_history_table"],
             exam_meta_table=cfg["exam_meta_table"],
             daily_question_map_table=cfg["daily_question_map_table"],
+            rejected_questions_table=cfg["rejected_questions_table"],
         )
     except Exception as e:
         logger.error(f"Failed to build DynamoDB client: {e}", exc_info=True)
@@ -401,6 +403,7 @@ def main() -> None:
                 question_history_table=cfg.dynamodb_question_history_table,
                 exam_meta_table=cfg.dynamodb_exam_meta_table,
                 daily_question_map_table=cfg.dynamodb_daily_question_map_table,
+                rejected_questions_table=cfg.dynamodb_rejected_questions_table,
             )
             
             # Build updates for question_history
@@ -528,6 +531,7 @@ def main() -> None:
                                         question_history_table=cfg.dynamodb_question_history_table,
                                         exam_meta_table=cfg.dynamodb_exam_meta_table,
                                         daily_question_map_table=cfg.dynamodb_daily_question_map_table,
+                                        rejected_questions_table=cfg.dynamodb_rejected_questions_table,
                                     )
                                     db.submit_question_feedback(
                                         exam_name=cfg.exam_name,

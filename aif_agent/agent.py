@@ -18,6 +18,7 @@ def _build_db(cfg) -> AifDynamoDb:
         question_history_table=cfg.dynamodb_question_history_table,
         exam_meta_table=cfg.dynamodb_exam_meta_table,
         daily_question_map_table=cfg.dynamodb_daily_question_map_table,
+        rejected_questions_table=cfg.dynamodb_rejected_questions_table,
     )
 
 
@@ -69,6 +70,12 @@ def run_daily_question_send() -> None:
     cfg = load_config()
     db = _build_db(cfg)
     llm = _build_llm(cfg)
+    llm = AifLlmClient(
+        api_key=cfg.groq_api_key,
+        model=cfg.groq_model,
+        db=db,
+        exam_name=cfg.exam_name,
+    )
 
     days_left = days_until_exam(cfg)
 
@@ -135,7 +142,6 @@ def _persist_question_batch(db: AifDynamoDb, exam_name: str, batch_id: str, ques
                 "created_at": now,
                 "answered": False,
             }
-        )
     db.put_question_history_batch(records)
 
 

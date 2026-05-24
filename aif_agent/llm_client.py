@@ -12,6 +12,7 @@ from groq import Groq
 from .guardrails import GuardrailReport, QuestionGuardrails
 
 logger = logging.getLogger(__name__)
+from datetime import datetime
 
 
 @dataclass
@@ -39,11 +40,13 @@ class GradedAnswer:
 
 
 class AifLlmClient:
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(self, api_key: str, model: str, db=None, exam_name: str | None = None) -> None:
         if not api_key:
             raise RuntimeError("GROQ_API_KEY must be set")
         self._client = Groq(api_key=api_key)
         self._model = model
+        self._db = db
+        self._exam_name = exam_name
 
     def _parse_generated_questions(self, content: str) -> List[Dict[str, Any]]:
         data = json.loads(content)
@@ -162,6 +165,25 @@ Fix the issues above and regenerate only valid questions.
                         attempt,
                     )
                 break
+            # Store rejected questions for audit trail
+            if self._db and self._exam_name and report.rejected_questions:
+                batch_id = f"gen-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+                rejected_data = [
+                    {
+                        "question_id": issue.question_id,
+                        "label": issue.label,
+                        "reason": issue.reason,
+                        "raw_question": {},  # Would ideally have the raw data
+                    }
+                    for issue in report.rejected_questions
+                ]
+                self._db.put_rejected_questions_batch(
+                    exam_name=self._exam_name,
+                    batch_id=batch_id,
+                    attempt=attempt,
+                    rejected_issues=rejected_data,
+                )
+
 
             logger.warning(
                 "Guardrails returned %s/%s valid questions on attempt %s",

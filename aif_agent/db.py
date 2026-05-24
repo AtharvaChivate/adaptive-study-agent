@@ -26,6 +26,19 @@ class QuestionFeedback:
     batch_id: str | None = None
 
 
+@dataclass
+class RejectedQuestion:
+    exam_name: str
+    rejected_id: str  # unique id for this rejection event
+    batch_id: str  # batch_id from generation attempt
+    attempt: int  # attempt number (1, 2, 3)
+    question_id: str  # from LLM response (may be malformed)
+    label: str
+    rejection_reason: str  # detailed reason why it was rejected
+    raw_question: Dict[str, Any]  # full question data for debugging
+    created_at: str
+
+
 class AifDynamoDb:
     def __init__(
         self,
@@ -34,12 +47,14 @@ class AifDynamoDb:
         question_history_table: str,
         exam_meta_table: str,
         daily_question_map_table: str,
+        rejected_questions_table: str,
     ) -> None:
         self._resource = boto3.resource("dynamodb", region_name=region)
         self._topic_mastery_tbl = self._resource.Table(topic_mastery_table)
         self._question_history_tbl = self._resource.Table(question_history_table)
         self._exam_meta_tbl = self._resource.Table(exam_meta_table)
         self._daily_question_map_tbl = self._resource.Table(daily_question_map_table)
+        self._rejected_questions_tbl = self._resource.Table(rejected_questions_table)
 
     # --- Exam meta ---
 
@@ -225,3 +240,102 @@ class AifDynamoDb:
                         ":aa": datetime.utcnow().isoformat(),
                     },
             )
+
+    # --- Rejected questions (guardrails audit trail) ---
+
+    def put_rejected_question(
+        self,
+        exam_name: str,
+        batch_id: str,
+        attempt: int,
+        question_id: str,
+        label: str,
+        rejection_reason: str,
+        raw_question: Dict[str, Any],
+    ) -> None:
+        """Store a rejected question for audit/debugging.
+        
+        This creates a permanent record of why the question was rejected,
+        useful for analyzing LLM quality, guardrails tuning, and debugging.
+        """
+        from datetime import datetime, timezone
+        import uuid
+        
+        rejected_id = f"{batch_id}#{attempt}#{uuid.uuid4().hex[:8]}"
+        now = datetime.now(timezone.utc).isoformat()
+        
+        self._rejected_questions_tbl.put_item(
+            Item={
+                "exam_name": exam_name,
+                "rejected_id": rejected_id,
+                "batch_id": batch_id,
+                "attempt": attempt,
+                "question_id": question_id,
+                "label": label,
+                "rejection_reason": rejection_reason,
+                "raw_question": raw_question,
+                "created_at": now,
+            }
+        )
+
+    def put_rejected_questions_batch(
+        self,
+        exam_name: str,
+        batch_id: str,
+        attempt: int,
+        rejected_issues: List[Dict[str, Any]],  # List of {question_id, label, reason, raw_question}
+    ) -> None:
+        """Batch store multiple rejected questions."""
+        with self._rejected_questions_tbl.batch_writer() as batch:
+            for issue in rejected_issues:
+                from datetime import datetime, timezone
+                import uuid
+                
+                rejected_id = f"{batch_id}#{attempt}#{uuid.uuid4().hex[:8]}"
+                now = datetime.now(timezone.utc).isoformat()
+                
+                batch.put_item(
+                    Item={
+                        "exam_name": exam_name,
+                        "rejected_id": rejected_id,
+                        "batch_id": batch_id,
+                        "attempt": attempt,
+                        "question_id": issue.get("question_id", "unknown"),
+                        "label": issue.get("label", "unknown"),
+                        "rejection_reason": issue.get("reason", ""),
+                        "raw_question": issue.get("raw_question", {}),
+                        "created_at": now,
+                    }
+                )
+
+    def list_rejected_questions(
+        self,
+        exam_name: str,
+        batch_id: str | None = None,
+    ) -> List[RejectedQuestion]:
+        """List rejected questions for an exam, optionally filtered by batch_id."""
+        if batch_id:
+            resp = self._rejected_questions_tbl.query(
+                KeyConditionExpression=Key("exam_name").eq(exam_name),
+                FilterExpression=Attr("batch_id").eq(batch_id),
+            )
+        else:
+            resp = self._rejected_questions_tbl.query(
+                KeyConditionExpression=Key("exam_name").eq(exam_name)
+            )
+        
+        items = resp.get("Items", [])
+        return [
+            RejectedQuestion(
+                exam_name=item.get("exam_name", exam_name),
+                rejected_id=item.get("rejected_id", ""),
+                batch_id=item.get("batch_id", ""),
+                attempt=int(item.get("attempt", 0)),
+                question_id=item.get("question_id", ""),
+                label=item.get("label", ""),
+                rejection_reason=item.get("rejection_reason", ""),
+                raw_question=item.get("raw_question", {}),
+                created_at=item.get("created_at", ""),
+            )
+            for item in items
+        ]

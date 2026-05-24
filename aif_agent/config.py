@@ -21,6 +21,7 @@ class AgentConfig:
     dynamodb_question_history_table: str
     dynamodb_exam_meta_table: str
     dynamodb_daily_question_map_table: str
+    dynamodb_rejected_questions_table: str
     groq_api_key: str
     groq_model: str
 
@@ -55,6 +56,7 @@ def load_config() -> AgentConfig:
         dynamodb_question_history_table=os.getenv("AIF_QUESTION_HISTORY_TABLE", "aif_question_history"),
         dynamodb_exam_meta_table=os.getenv("AIF_EXAM_META_TABLE", "aif_exam_meta"),
         dynamodb_daily_question_map_table=os.getenv("AIF_DAILY_QUESTION_MAP_TABLE", "aif_daily_question_map"),
+        dynamodb_rejected_questions_table=os.getenv("AIF_REJECTED_QUESTIONS_TABLE", "aif_rejected_questions"),
         groq_api_key=os.getenv("GROQ_API_KEY", ""),
         groq_model=os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile"),
     )
