@@ -1,36 +1,34 @@
-# AWS AIF Study Agent
+# Autonomous Adaptive Study Agent
 
 ## Overview
-This project is an autonomous AI study agent designed to help a user prepare for the AWS Artificial Intelligence Foundations (AIF) exam.
+This project is an autonomous LLM-powered study agent designed to help users master complex technical domains and prepare for specialized certifications.
 
-The agent generates practice questions, collects answers through a local Streamlit UI, evaluates user responses, tracks topic mastery over time, and adapts future questions based on performance and time remaining until the exam.
+The agent generates dynamic practice questions, captures answers through an interactive Streamlit UI, evaluates response quality using LLM-driven grading, and utilizes persistent memory to adapt future curricula based on mastery scores and goal deadlines.
 
 This is a true **stateful AI agent**, not just a scheduled script.
 
 ---
 
 ## Core Goals
-- Maximize probability of passing AWS AIF
-- Provide consistent daily practice
-- Adapt content to user weaknesses
+- Maximize exam readiness and long-term knowledge retention
+- Provide a low-friction, interactive study experience
+- Automatically adapt curricula to target individual user weaknesses
 - Require minimal manual intervention
 
 ---
 
 ## What Makes This an Agent
 - Persistent memory (DynamoDB)
-- Autonomous daily execution
 - Goal-directed behavior
 - Feedback-driven adaptation
 - **Reliability Layer**: Self-healing loops for LLM API failures
-- LLM used as a tool, not as memory
+- Deterministic policy engine for curriculum scheduling
 
 ---
 
 ## System Architecture
 
 ### Components
-- **Scheduler**: Triggers daily agent run
 - **Streamlit UI**: Main interaction point for presenting questions, capturing answers, and providing real-time feedback
 - **DynamoDB**: Long-term memory for question history, topic mastery, exam metadata, and user progress
 - **LLM**: Generates practice questions and grades answers
@@ -51,10 +49,10 @@ This is a true **stateful AI agent**, not just a scheduled script.
 
 ### Current Tables
 - `aif_topic_mastery`: Per-topic mastery scores by exam
-- `aif_question_history`: Generated questions and user answer history
+- `aif_question_history`: Audit log of generated questions and user performance
 - `aif_exam_meta`: Exam-level metadata
-- `aif_daily_question_map`: Batch-to-question mapping for deterministic reply parsing
-- `aif_rejected_questions`: Audit log for questions rejected by guardrails
+- `aif_daily_question_map`: Mapping for tracking question batches across sessions
+- `aif_rejected_questions`: Log for questions that failed quality guardrails
 
 ### Derived State
 - Days until exam
@@ -75,7 +73,7 @@ Stores generated questions, user answers, grading results, and feedback.
 Stores exam-level metadata (exam name, date).
 
 ### daily_question_map
-Maps session question numbers to question IDs for tracking and result persistence.
+Maps session labels to unique question IDs for deterministic tracking and persistence.
 
 ### rejected_questions
 Audit log for questions that failed the guardrails quality gate.
@@ -84,14 +82,14 @@ Audit log for questions that failed the guardrails quality gate.
 
 ## Daily Agent Loop
 
-1. Load memory from DynamoDB
-2. Compute days remaining
-3. Identify weak topics
-4. Select topics and difficulty mix
-5. Generate questions using LLM (with schema-validation retries)
-6. Persist the batch to DynamoDB
-7. Present questions in the Streamlit UI
-8. Await and record user answers through the UI
+1. **Retrieve State**: Load mastery scores and goal metadata from DynamoDB.
+2. **Analyze Gaps**: Identify weak topics and calculate days remaining until the goal date.
+3. **Apply Policy**: The engine selects topics and scales question volume based on progress.
+4. **Generate**: Produce questions via LLM with structured output validation.
+5. **Validate**: Run content through a deterministic guardrails engine.
+6. **Persist**: Write the valid question batch to the data layer.
+7. **Interactive Session**: Present questions and capture responses via the Streamlit UI.
+8. **Evaluate**: Grade responses and update persistent memory to close the feedback loop.
 
 ---
 
