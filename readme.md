@@ -47,12 +47,14 @@ This is a true **stateful AI agent**, not just a scheduled script.
 - Question history
 - Exam date
 - Daily question mappings
+- Guardrail rejection logs
 
 ### Current Tables
 - `aif_topic_mastery`: Per-topic mastery scores by exam
 - `aif_question_history`: Generated questions and user answer history
 - `aif_exam_meta`: Exam-level metadata
 - `aif_daily_question_map`: Batch-to-question mapping for deterministic reply parsing
+- `aif_rejected_questions`: Audit log for questions rejected by guardrails
 
 ### Derived State
 - Days until exam
@@ -74,6 +76,9 @@ Stores exam-level metadata (exam name, date).
 
 ### daily_question_map
 Maps session question numbers to question IDs for tracking and result persistence.
+
+### rejected_questions
+Audit log for questions that failed the guardrails quality gate.
 
 ---
 
