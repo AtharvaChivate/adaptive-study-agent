@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Dict
 import re
+from pathlib import Path
 
 from .config import load_config, days_until_exam
 from .db import AifDynamoDb
@@ -65,6 +66,24 @@ def _derive_user_answers(reply_body: str, labels_in_order: List[str]) -> Dict[st
     return answers
 
 
+def _load_scope_services() -> List[str]:
+    """Load in-scope AWS services/features from workspace scope.txt."""
+    scope_path = Path(__file__).resolve().parent.parent / "scope.txt"
+    if not scope_path.exists():
+        return []
+
+    services: List[str] = []
+    for raw_line in scope_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.endswith(":"):
+            continue
+        if line.startswith("•"):
+            services.append(line.lstrip("•").strip())
+    return services
+
+
 def run_daily_question_send() -> None:
     """Generate questions, store mappings, and email them to the user."""
     cfg = load_config()
@@ -82,12 +101,14 @@ def run_daily_question_send() -> None:
     masteries = db.list_topic_mastery(cfg.exam_name)
     weak_topics = select_weak_topics(masteries)
     num_questions = pick_question_count(cfg, days_left)
+    scope_services = _load_scope_services()
 
     questions = llm.generate_questions(
         days_until_exam=days_left,
         num_questions=num_questions,
         weak_topics=weak_topics,
         domains_weighting=domain_weighting(),
+        allowed_scope_services=scope_services,
     )
 
     # De-duplicate questions within a single email based on question text,
@@ -142,6 +163,7 @@ def _persist_question_batch(db: AifDynamoDb, exam_name: str, batch_id: str, ques
                 "created_at": now,
                 "answered": False,
             }
+        )
     db.put_question_history_batch(records)
 
 
@@ -206,7 +228,7 @@ def grade_from_reply(batch_id: str, reply_body: str) -> None:
     topic_scores: Dict[str, float] = {m.topic_id: m.score for m in masteries}
     for gr in graded_results:
         current = topic_scores.get(gr.topic_id, 0.5)
-        new_score = max(0.0, min(1.0, current + gr.mastery_delta))
+        new_score = round(max(0.0, min(1.0, current + gr.mastery_delta)), 3)
         topic_scores[gr.topic_id] = new_score
         db.update_topic_mastery(cfg.exam_name, gr.topic_id, new_score)
 

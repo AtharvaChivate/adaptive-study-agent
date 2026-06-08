@@ -126,9 +126,19 @@ class AifDynamoDb:
     # --- Question history ---
 
     def put_question_history_batch(self, records: List[Dict[str, Any]]) -> None:
-        with self._question_history_tbl.batch_writer() as batch:
-            for r in records:
-                batch.put_item(Item=r)
+        # DynamoDB BatchWriteItem rejects requests containing duplicate keys.
+        # Keep only the last occurrence for each (exam_name, question_id).
+        deduped: Dict[tuple[str, str], Dict[str, Any]] = {}
+        for r in records:
+            exam_name = str(r.get("exam_name", ""))
+            question_id = str(r.get("question_id", ""))
+            if not exam_name or not question_id:
+                continue
+            deduped[(exam_name, question_id)] = r
+
+        with self._question_history_tbl.batch_writer(overwrite_by_pkeys=["exam_name", "question_id"]) as batch:
+            for item in deduped.values():
+                batch.put_item(Item=item)
 
     def list_questions_for_batch(self, exam_name: str, batch_id: str) -> List[Dict[str, Any]]:
         """Return all question_history records for a given exam and batch.

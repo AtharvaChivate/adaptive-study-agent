@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
+from typing import Any, Dict, List, Literal
+from pydantic import BaseModel, Field, field_validator, model_validator
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple
 
 
 _ALLOWED_QUESTION_TYPES = {"mcq", "scenario_mcq", "practical_mcq"}
@@ -11,6 +13,72 @@ _FORBIDDEN_PHRASES = {
     "both a and b",
     "all options",
 }
+
+
+class AifQuestion(BaseModel):
+    """Pydantic model for a generated AWS AIF practice question."""
+    question_id: str = Field(..., description="Stable unique identifier for the question")
+    label: str = Field(..., description="UI label, e.g., 'Q1'")
+    text: str = Field(..., min_length=12, description="The full question text")
+    options: List[str] = Field(..., min_items=4, max_items=4, description="List of 4 unique options")
+    correct_option: Literal["A", "B", "C", "D"] = Field(..., description="The correct answer letter")
+    explanation: str = Field(..., min_length=1, description="Explanation of why the answer is correct")
+    topic_id: str = Field(..., description="AWS Blueprint Task ID (e.g., D1.T1.1)")
+    question_type: Literal["mcq", "scenario_mcq", "practical_mcq"] = "mcq"
+
+    @field_validator("topic_id")
+    @classmethod
+    def validate_topic_id_format(cls, v: str) -> str:
+        # Pattern for Domain X, Task Y, Objective Z (e.g., D1.T2.1)
+        if not re.match(r"^D\d+\.T\d+\.\d+$", v):
+            raise ValueError(f"topic_id '{v}' must be a valid Blueprint Task ID in DX.TX.X format")
+        return v
+
+    @field_validator("options")
+    @classmethod
+    def validate_unique_options(cls, v: List[str]) -> List[str]:
+        if len(set(opt.strip().lower() for opt in v)) != 4:
+            raise ValueError("All 4 options must be unique and non-empty")
+        return v
+
+    @model_validator(mode="after")
+    def check_forbidden_phrases_and_alignment(self) -> AifQuestion:
+        text_low = self.text.lower()
+        expl_low = self.explanation.lower()
+        
+        for phrase in _FORBIDDEN_PHRASES:
+            if phrase in text_low or phrase in expl_low:
+                raise ValueError(f"Forbidden phrase detected: '{phrase}'")
+
+        # Ensure explanation mentions the correct answer choice or its letter
+        idx = ord(self.correct_option) - ord("A")
+        correct_text = self.options[idx].lower()
+        if correct_text not in expl_low and self.correct_option.lower() not in expl_low:
+            raise ValueError("Explanation must reference the correct answer or its option letter")
+            
+        return self
+
+
+class QuestionBatch(BaseModel):
+    """Wrapper for a batch of generated questions."""
+    questions: List[AifQuestion]
+
+
+class AifGradedAnswer(BaseModel):
+    """Pydantic model for a graded response."""
+    question_id: str
+    label: str
+    user_answer: str
+    is_correct: bool
+    short_feedback: str = Field(..., description="1-2 sentences of conversational feedback")
+    detailed_explanation: str = Field(..., description="Deep dive into the concept")
+    topic_id: str
+    mastery_delta: float = Field(..., ge=-0.2, le=0.2, description="Adjustment to mastery score")
+
+
+class GradingBatch(BaseModel):
+    """Wrapper for a batch of graded answers."""
+    graded: List[AifGradedAnswer]
 
 
 @dataclass

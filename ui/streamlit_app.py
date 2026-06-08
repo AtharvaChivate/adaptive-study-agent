@@ -6,6 +6,7 @@ import time
 import uuid
 import logging
 from typing import List, Dict
+import pandas as pd
 from pathlib import Path
 
 # Load environment variables from .env
@@ -32,6 +33,23 @@ import streamlit as st
 from aif_agent.llm_client import GeneratedQuestion, GradedAnswer, AifLlmClient
 from aif_agent.db import AifDynamoDb
 from aif_agent.config import load_config, days_until_exam
+
+
+def _load_scope_services() -> List[str]:
+    scope_path = Path(__file__).resolve().parent.parent / "scope.txt"
+    if not scope_path.exists():
+        return []
+
+    services: List[str] = []
+    for raw_line in scope_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.endswith(":"):
+            continue
+        if line.startswith("•"):
+            services.append(line.lstrip("•").strip())
+    return services
 
 
 def mock_generate_questions(num_questions: int) -> List[GeneratedQuestion]:
@@ -87,21 +105,36 @@ def try_build_llm_and_generate(num_questions: int) -> List[GeneratedQuestion]:
 
     try:
         logger.info(f"Building LLM client with model {groq_model}...")
-        llm = AifLlmClient(api_key=groq_key, model=groq_model)
+        
+        # Instantiate DB to enable rejection audit trail for UI-generated questions
+        cfg_db = _load_dynamodb_settings()
+        db = AifDynamoDb(
+            region=cfg_db["aws_region"],
+            topic_mastery_table=cfg_db["topic_mastery_table"],
+            question_history_table=cfg_db["question_history_table"],
+            exam_meta_table=cfg_db["exam_meta_table"],
+            daily_question_map_table=cfg_db["daily_question_map_table"],
+            rejected_questions_table=cfg_db["rejected_questions_table"],
+        )
+        llm = AifLlmClient(api_key=groq_key, model=groq_model, db=db, exam_name=cfg_db["exam_name"])
+        
+        scope_services = _load_scope_services()
         logger.info(f"Generating {num_questions} questions (days to exam: {days_to_exam})...")
         questions = llm.generate_questions(
             days_until_exam=days_to_exam, 
             num_questions=num_questions, 
             weak_topics=[], 
-            domains_weighting={}
+            domains_weighting={},
+            allowed_scope_services=scope_services,
         )
         logger.info(f"Successfully generated {len(questions)} real questions via LLM")
         st.success(f"✅ Generated {len(questions)} real questions via LLM")
         return questions
     except Exception as e:
         logger.error(f"LLM generation failed: {e}", exc_info=True)
-        st.warning(f"LLM generation failed: {e}. Using mock questions.")
-        return mock_generate_questions(num_questions)
+        st.error(f"LLM generation failed: {e}. Cannot proceed with real test.")
+        # Issue 4 & 5: Do NOT return mock questions if the intention is a real test
+        raise
 
 
 def _load_dynamodb_settings() -> dict[str, str]:
@@ -177,6 +210,51 @@ def persist_batch_if_possible(questions: List[GeneratedQuestion], batch_id: str)
     return True
 
 
+def render_mastery_dashboard():
+    st.header("📈 Mastery Dashboard")
+    
+    try:
+        cfg = load_config()
+        db = AifDynamoDb(
+            region=cfg.aws_region,
+            topic_mastery_table=cfg.dynamodb_topic_mastery_table,
+            question_history_table=cfg.dynamodb_question_history_table,
+            exam_meta_table=cfg.dynamodb_exam_meta_table,
+            daily_question_map_table=cfg.dynamodb_daily_question_map_table,
+            rejected_questions_table=cfg.dynamodb_rejected_questions_table,
+        )
+        
+        # 1. Fetch Current Mastery
+        masteries = db.list_topic_mastery(cfg.exam_name)
+        if masteries:
+            # Summary metrics at the top
+            avg_score = sum(m.score for m in masteries) / len(masteries)
+            sorted_masteries = sorted(masteries, key=lambda x: x.score)
+            weakest = sorted_masteries[0].topic_id
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Global Mastery", f"{avg_score:.1%}")
+            with col2:
+                st.metric("Primary Focus Area", weakest)
+
+            st.subheader("Topic Proficiency")
+            df_m = pd.DataFrame([{"Topic": m.topic_id, "Score": m.score} for m in masteries])
+            df_m = df_m.sort_values("Score", ascending=True)
+            st.bar_chart(df_m.set_index("Topic"))
+        else:
+            st.info("No mastery data found yet. Complete a practice test to see your progress!")
+
+    except Exception as e:
+        logger.error(f"Dashboard error: {e}", exc_info=True)
+        st.error(f"Failed to load dashboard data: {e}")
+    
+    st.markdown("---")
+    if st.button("Back to Landing"):
+        st.session_state.state = "landing"
+        st.rerun()
+
+
 def grade_locally(questions: List[GeneratedQuestion], answers: Dict[str, str]) -> List[GradedAnswer]:
     graded: List[GradedAnswer] = []
     for q in questions:
@@ -218,9 +296,15 @@ def main() -> None:
                     log_content = f.read()
                     st.code(log_content[-2000:], language="text")  # Show last 2000 chars
         
-        if st.button("Start Test"):
-            st.session_state.state = "prefs"
-            st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🚀 Start Test", use_container_width=True):
+                st.session_state.state = "prefs"
+                st.rerun()
+        with col2:
+            if st.button("📊 View Dashboard", use_container_width=True):
+                st.session_state.state = "dashboard"
+                st.rerun()
 
     if st.session_state.state == "prefs":
         st.header("Test Preferences")
@@ -236,23 +320,34 @@ def main() -> None:
             if st.button("Yes, Start"):
                 # generate questions
                 with st.spinner("Generating questions..."):
-                    questions = try_build_llm_and_generate(num)
-                    # normalize labels
-                    for idx, q in enumerate(questions, start=1):
-                        q.label = f"Q{idx}"
-                    st.session_state.questions = questions
-                    st.session_state.answers = {}
-                    st.session_state.current = 0
-                    st.session_state.timer_sec = timer_sec
-                    st.session_state.batch_id = time.strftime("%Y-%m-%d-%H%M%S", time.gmtime())
-                    # persist (best-effort)
-                    persist_batch_if_possible(questions, st.session_state.batch_id)
-                st.session_state.state = "test"
-                st.rerun()
+                    try:
+                        questions = try_build_llm_and_generate(num)
+                        if not questions:
+                            st.error("No questions were generated. Please check logs.")
+                            return
+
+                        # normalize labels
+                        for idx, q in enumerate(questions, start=1):
+                            q.label = f"Q{idx}"
+                        st.session_state.questions = questions
+                        st.session_state.answers = {}
+                        st.session_state.current = 0
+                        st.session_state.timer_sec = timer_sec
+                        st.session_state.batch_id = time.strftime("%Y-%m-%d-%H%M%S", time.gmtime())
+                        
+                        # persist only if we have real questions
+                        persist_batch_if_possible(questions, st.session_state.batch_id)
+                        st.session_state.state = "test"
+                        st.rerun()
+                    except Exception:
+                        st.error("Failed to start test due to generation error.")
         with cols[1]:
             if st.button("Cancel"):
                 st.session_state.state = "landing"
                 st.rerun()
+    
+    if st.session_state.state == "dashboard":
+        render_mastery_dashboard()
 
     if st.session_state.state == "test":
         questions: List[GeneratedQuestion] = st.session_state.questions
@@ -377,6 +472,14 @@ def main() -> None:
 
     if st.session_state.state == "results":
         st.header("Results")
+        # Safety guard against empty session state (e.g. on page refresh)
+        if "questions" not in st.session_state:
+            st.warning("⚠️ No active session data found. Please return to the landing page.")
+            if st.button("Back to Landing"):
+                st.session_state.state = "landing"
+                st.rerun()
+            return
+
         questions: List[GeneratedQuestion] = st.session_state.questions
         answers: Dict[str, str] = st.session_state.answers
         
@@ -442,7 +545,7 @@ def main() -> None:
                     
                     # Calculate new score: clamp between 0.0 and 1.0
                     avg_delta = sum(deltas) / len(deltas) if deltas else 0.0
-                    new_score = max(0.0, min(1.0, current_score + avg_delta))
+                    new_score = round(max(0.0, min(1.0, current_score + avg_delta)), 3)
                     
                     logger.info(f"Updating mastery for {topic_id}: {current_score:.2f} -> {new_score:.2f} (delta: {avg_delta:.2f})")
                     db.update_topic_mastery(cfg.exam_name, topic_id, new_score)

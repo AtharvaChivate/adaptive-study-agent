@@ -22,6 +22,7 @@ This is a true **stateful AI agent**, not just a scheduled script.
 - Autonomous daily execution
 - Goal-directed behavior
 - Feedback-driven adaptation
+- **Reliability Layer**: Self-healing loops for LLM API failures
 - LLM used as a tool, not as memory
 
 ---
@@ -35,6 +36,7 @@ This is a true **stateful AI agent**, not just a scheduled script.
 - **LLM**: Generates practice questions and grades answers
 - **Policy Logic**: Controls topic selection and difficulty
 - **Feedback Loop**: Updates question history and mastery scores
+- **Guardrails Engine**: Deterministic quality gate for all generated content
 
 ---
 
@@ -81,7 +83,7 @@ Maps session question numbers to question IDs for tracking and result persistenc
 2. Compute days remaining
 3. Identify weak topics
 4. Select topics and difficulty mix
-5. Generate questions using LLM
+5. Generate questions using LLM (with schema-validation retries)
 6. Persist the batch to DynamoDB
 7. Present questions in the Streamlit UI
 8. Await and record user answers through the UI
@@ -140,4 +142,4 @@ Maps session question numbers to question IDs for tracking and result persistenc
 ---
 
 ## Status
-Functional MVP agent with closed feedback loop and a working Streamlit-based answer persistence path.
+Functional MVP agent with closed feedback loop, Streamlit UI, and a robust reliability layer for handling LLM output truncation and schema validation retries.
