@@ -1,4 +1,7 @@
 boto3
-groq
+langchain_core
+langchain_groq
+pandas
+pydantic
 python-dotenv
 streamlit
